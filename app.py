@@ -69,7 +69,7 @@ client = genai.Client(api_key=API_KEY)
 st.markdown("""
 <div class="header-container">
     <h1 class="header-title">🚢 Klas Kuruluşu Sörveyörü V2</h1>
-    <p class="header-subtitle">Gemini 1.5 Pro Multi-Document Çapraz Kontrol (Double-Check) Motoru</p>
+    <p class="header-subtitle">Gemini 1.5 Flash Multi-Document Çapraz Kontrol (Double-Check) Motoru</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -156,10 +156,10 @@ if analyze_btn:
             contents = uploaded_gemini_files.copy()
             contents.append(prompt_text)
 
-            with st.spinner("🧠 Gemini 1.5 Pro belgeleri çapraz kontrol ediyor. Bu işlem kapsamlı olduğu için 1-2 dakika sürebilir..."):
+            with st.spinner("🧠 Gemini 1.5 Flash belgeleri çapraz kontrol ediyor..."):
                 response = client.models.generate_content(
-                    # BURASI DÜZELTİLDİ: gemini-1.5-pro-latest
-                    model="gemini-1.5-pro-latest", 
+                    # BURASI DÜZELTİLDİ: gemini-1.5-flash
+                    model="gemini-1.5-flash", 
                     contents=contents,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
