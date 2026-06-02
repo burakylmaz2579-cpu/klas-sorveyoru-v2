@@ -73,17 +73,23 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-col1, col2 = st.columns([1, 1.5])
+col1, col2 = st.columns([1.2, 1])
 
 with col1:
     st.subheader("📋 Gemi ve Denetim Bilgileri")
     vessel_name = st.text_input("Gemi Adı (Referans)")
-    imo_number = st.text_input("IMO Numarası")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        imo_number = st.text_input("IMO Numarası")
+    with col_b:
+        grt_dwt = st.text_input("GT / DWT")
+        
     vessel_type = st.selectbox("Gemi Türü", ["Seçiniz", "General Cargo", "Bulk Carrier", "Oil Tanker", "Chemical Tanker", "Container", "Diğer"])
 
 with col2:
     st.subheader("📁 Çapraz Kontrol İçin Belgeleri Yükle")
-    st.info("Sörvey raporu, Narrative Report ve Sertifikaları (PDF) aynı anda yükleyebilirsiniz. Sistem çapraz kontrol yapacaktır.")
+    st.info("Sörvey raporu, Narrative Report ve Sertifikaları (PDF) aynı anda yükleyebilirsiniz.")
     uploaded_files = st.file_uploader("Çoklu PDF Yükleme", type=["pdf"], accept_multiple_files=True)
 
 analyze_btn = st.button("🚀 Belgeleri Oku ve Çapraz Kontrol (Double-Check) Yap", type="primary", use_container_width=True)
@@ -102,6 +108,7 @@ AŞAĞIDAKİ ALTIN KURALLARA KESİNLİKLE UYACAKSIN:
 5. TARİH VE VİZE KONTROLÜ (KRİTİK!): Sertifikaların bitiş tarihlerini (Valid until) ve Annual Endorsement (Yıllık Vize) sayfalarını KONTROL ET. Süresi geçmişse veya vize atılmamışsa "Kırmızı Alarm" ver.
 6. IMO/GEMİ UYUŞMAZLIĞI (KRİTİK!): Yüklenen belgelerdeki gemi isimleri veya IMO'lar birbiriyle uyuşmuyorsa, "Kırmızı Alarm: Farklı gemi evrakları yüklendi" uyarısı ver.
 7. EKİPMAN ÇELİŞKİSİ: Sertifikadaki cihaz markası ile saha raporundaki marka uyuşmuyorsa bunu "Uyarı (warning)" olarak raporla.
+8. TONAJ KONTROLÜ: Kullanıcının girdiği GT ve DWT değerlerini dikkate alarak SOLAS/MARPOL kurallarının uygulanabilirliğini (örn. 400 GT altı/üstü kural farkları) mutlaka kontrol et.
 
 ÖNEMLİ ZORUNLULUK: Analiz ettiğin HER MADDENİN yanına KESİNLİKLE ilgili kuralı (SOLAS Bölüm..., MARPOL Ek..., IMO MSC.Circ...) referans olarak ekleyeceksin. Referanssız madde kalmayacak.
 
@@ -144,7 +151,7 @@ if analyze_btn:
                 
                 time.sleep(3) 
 
-            prompt_text = f"Kullanıcının Girdiği Gemi Referans Bilgileri:\nAdı: {vessel_name}\nIMO: {imo_number}\nTür: {vessel_type}\nLütfen tüm belgeleri analiz edip kurallara uygun JSON dön."
+            prompt_text = f"Kullanıcının Girdiği Gemi Referans Bilgileri:\nAdı: {vessel_name}\nIMO: {imo_number}\nGT/DWT: {grt_dwt}\nTür: {vessel_type}\nLütfen tüm belgeleri analiz edip kurallara uygun JSON dön."
             
             contents = uploaded_gemini_files.copy()
             contents.append(prompt_text)
