@@ -158,7 +158,8 @@ if analyze_btn:
 
             with st.spinner("🧠 Gemini 1.5 Pro belgeleri çapraz kontrol ediyor. Bu işlem kapsamlı olduğu için 1-2 dakika sürebilir..."):
                 response = client.models.generate_content(
-                    model="gemini-1.5-pro",
+                    # BURASI DÜZELTİLDİ: gemini-1.5-pro-latest
+                    model="gemini-1.5-pro-latest", 
                     contents=contents,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
