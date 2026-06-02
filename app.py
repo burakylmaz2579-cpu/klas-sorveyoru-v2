@@ -65,11 +65,21 @@ except Exception:
 
 client = genai.Client(api_key=API_KEY)
 
+# --- SOL MENÜ (MODEL SEÇİCİ) ---
+with st.sidebar:
+    st.title("⚙️ Sistem Ayarları")
+    st.markdown("Google API bölgenize göre çalışan modeli seçin.")
+    selected_model = st.selectbox(
+        "Yapay Zeka Modeli", 
+        ["gemini-2.5-flash", "gemini-flash-latest", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro-latest"]
+    )
+    st.info("💡 Not: Analiz sırasında '404 NOT FOUND' hatası alırsanız, kodu değiştirmeden bu menüden farklı bir model seçip 'Analiz Et' butonuna tekrar basmanız yeterlidir.")
+
 # --- ARAYÜZ ---
 st.markdown("""
 <div class="header-container">
     <h1 class="header-title">🚢 Klas Kuruluşu Sörveyörü V2</h1>
-    <p class="header-subtitle">Gemini 1.5 Flash Multi-Document Çapraz Kontrol (Double-Check) Motoru</p>
+    <p class="header-subtitle">Multi-Document Çapraz Kontrol (Double-Check) Motoru</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -92,7 +102,7 @@ with col2:
     st.info("Sörvey raporu, Narrative Report ve Sertifikaları (PDF) aynı anda yükleyebilirsiniz.")
     uploaded_files = st.file_uploader("Çoklu PDF Yükleme", type=["pdf"], accept_multiple_files=True)
 
-analyze_btn = st.button("🚀 Belgeleri Oku ve Çapraz Kontrol (Double-Check) Yap", type="primary", use_container_width=True)
+analyze_btn = st.button(f"🚀 Belgeleri Oku ve Çapraz Kontrol Yap", type="primary", use_container_width=True)
 
 # --- MASTER PROMPT (V2 KURALLARI) ---
 system_instruction = """
@@ -140,7 +150,7 @@ if analyze_btn:
         tmp_file_paths = []
         
         try:
-            with st.spinner("📤 Belgeler güvenli sunucuya yükleniyor (Çoklu belge yüklemesi biraz sürebilir)..."):
+            with st.spinner(f"📤 Belgeler güvenli sunucuya yükleniyor..."):
                 for uploaded_file in uploaded_files:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                         tmp.write(uploaded_file.getvalue())
@@ -156,10 +166,9 @@ if analyze_btn:
             contents = uploaded_gemini_files.copy()
             contents.append(prompt_text)
 
-            with st.spinner("🧠 Gemini 1.5 Flash belgeleri çapraz kontrol ediyor..."):
+            with st.spinner(f"🧠 {selected_model} belgeleri çapraz kontrol ediyor. Bu işlem kapsamlı olduğu için 1-2 dakika sürebilir..."):
                 response = client.models.generate_content(
-                    # BURASI DÜZELTİLDİ: gemini-1.5-flash
-                    model="gemini-1.5-flash", 
+                    model=selected_model, 
                     contents=contents,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
