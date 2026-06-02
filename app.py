@@ -62,10 +62,6 @@ try:
 except Exception:
     st.error("🚨 API Anahtarı bulunamadı! Lütfen Streamlit ayarlarından 'Secrets' kısmına GEMINI_API_KEY ekleyin.")
     st.stop()
-    
-    # --- ARAYÜZ ---
-st.title("🚢 Klas Sörveyörü V2.3 | Sörveyör Notları Destekli")
-col1, col2 = st.columns([1, 1])
 
 client = genai.Client(api_key=API_KEY)
 
@@ -106,6 +102,10 @@ with col1:
         grt_dwt = st.text_input("GT / DWT")
         
     vessel_type = st.selectbox("Gemi Türü", ["Seçiniz", "General Cargo", "Bulk Carrier", "Oil Tanker", "Chemical Tanker", "Container", "Diğer"])
+    
+    surveyor_notes = st.text_area("Sörveyör Özel Notları / Talimatları (Opsiyonel)", 
+                                  placeholder="Örn: 1.3 maddesini check and verify yapın veya 12.4 unmarked olarak değerlendirilsin.",
+                                  help="Sörveyörün veya PHRS yetkililerinin eklediği notları/talimatları buraya yazabilirsiniz. Yapay zeka tüm belgeyle birlikte bu notları da analiz edecektir.")
 
 with col2:
     st.subheader("📁 Çapraz Kontrol İçin Belgeleri Yükle")
@@ -172,7 +172,16 @@ if analyze_btn:
                 
                 time.sleep(3) 
 
-            prompt_text = f"Kullanıcının Girdiği Gemi Referans Bilgileri:\nAdı: {vessel_name}\nIMO: {imo_number}\nGT/DWT: {grt_dwt}\nTür: {vessel_type}\nLütfen tüm belgeleri analiz edip kurallara uygun JSON dön."
+            prompt_text = f"""Kullanıcının Girdiği Gemi Referans Bilgileri:
+Adı: {vessel_name}
+IMO: {imo_number}
+GT/DWT: {grt_dwt}
+Tür: {vessel_type}
+
+Sörveyör Özel Notları / Ek Talimatları:
+{surveyor_notes if surveyor_notes else 'Yok'}
+
+Lütfen tüm belgeleri analiz edip yukarıdaki özel sörveyör notlarını/talimatlarını da dikkate alarak kurallara uygun JSON dön."""
             
             contents = uploaded_gemini_files.copy()
             contents.append(prompt_text)
@@ -302,3 +311,4 @@ if st.session_state["analysis_results"] is not None:
         else:
             for f in succ_findings:
                 render_finding(f)
+
