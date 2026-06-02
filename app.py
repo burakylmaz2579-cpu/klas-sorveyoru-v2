@@ -11,13 +11,13 @@ from io import BytesIO
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(
-    page_title="Klas Sörveyörü V2.5 | Sunum Özel",
+    page_title="Klas Sörveyörü V3.0 | Canlı Analiz Motoru",
     page_icon="🚢",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- TASARIM (CSS) ---
+# --- PREMIUM TASARIM (CSS) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
@@ -38,21 +38,17 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- MOCK DATA (SUNUM GARANTİSİ VERİSİ) ---
-def get_mock_data(vessel_name, survey_type, surveyor_notes):
-    return {
-        "cross_check_status": "Başarılı",
-        "vessel_evaluation": f"{vessel_name} gemisi için yüklenen sörvey raporları ve sertifikalar incelenmiştir. Eklenen sörveyör notu ('{surveyor_notes}') uyarınca kritik maddeler double-check edilmiştir.",
-        "findings": [
-            {"item_no": "1", "title": "Sörvey Tipi Doğrulama", "rule": "IACS PR1C", "category": "Dokümantasyon", "status": f"Eşleşti ({survey_type})", "severity": "success", "description": f"Belge üzerindeki sörvey tipi ile kullanıcının seçtiği {survey_type} tipi birebir uyumludur."},
-            {"item_no": "2", "title": "1.3 Sörveyör Özel Notu Kontrolü", "rule": "SOLAS Ch.I Reg.12", "category": "Dokümantasyon", "status": "Öncelikli İnceleme", "severity": "warning", "description": f"Sörveyörün '{surveyor_notes}' notuna istinaden yapılan kontrolde, ilgili form alanının taranmamış veya imzasız bırakıldığı tespit edilmiştir. Kontrolü gereklidir."},
-            {"item_no": "3", "title": "Odfjell / Yağ Filtre Ünitesi Değişimi", "rule": "MARPOL Annex I Reg.14", "category": "Makine", "status": "Ekipman Çelişkisi", "severity": "error", "description": "IOPP sertifikasında ana seperatör markası 'Sartorius' olarak beyan edilmişken, sörvey saha narrative raporunda 'Alfa Laval' olarak kaydedilmiştir."},
-            {"item_no": "4", "title": "Filika Donanımları Kontrolü", "rule": "SOLAS Ch.III Reg.20", "category": "Emniyet", "status": "Uygun", "severity": "success", "description": "Can filikası indirme donanımları ve haftalık test kayıtları eksiksizdir, tik işareti (☑) doğrulanmıştır."},
-            {"item_no": "5", "title": "Sertifika Geçerlilik Tarihi", "rule": "SOLAS Ch.I Reg.14", "category": "Dokümantasyon", "status": "Vize Eksik", "severity": "critical", "description": "Gemi Kısa Dönem (Short Term) Emniyet Teçhizat Sertifikasının yıllık vize (Annual Endorsement) sayfasında klas sörveyörünün vizesi boş bırakılmıştır!"}
-        ]
-    }
+# --- ROBUST JSON PARSER ---
+def robust_json_parser(clean_text):
+    try:
+        json_match = re.search(r"\{.*\}", clean_text, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group(0))
+        return json.loads(clean_text)
+    except Exception:
+        return None
 
-# --- EXCEL VE PARSER ---
+# --- EXCEL EXPORT ---
 def generate_excel(findings):
     df = pd.DataFrame(findings)
     output = BytesIO()
@@ -60,24 +56,39 @@ def generate_excel(findings):
         df.to_excel(writer, index=False, sheet_name='Survey Report')
     return output.getvalue()
 
-# --- STATE ---
+# --- STATE MANAGEMENT ---
 if "analysis_results" not in st.session_state: st.session_state["analysis_results"] = None
+if "analyzed_vessel_name" not in st.session_state: st.session_state["analyzed_vessel_name"] = ""
 
-# --- SIDEBAR ---
+# --- SOL SIDEBAR (KOTA VE MODEL YÖNETİMİ) ---
 with st.sidebar:
-    st.title("⚙️ Sunum Kontrol Paneli")
-    # EN KRİTİK SEÇENEK: Sunum modu anahtarı
-    app_mode = st.radio("Çalışma Modu", ["🎯 SUNUM / DEMO MODU (Garantili)", "🌐 CANLI API MODU (Kota Bağımlı)"])
-    selected_model = st.selectbox("Yortumsal Model", ["gemini-2.0-flash"])
+    st.title("⚙️ Gelişmiş Ayarlar")
     
-    if app_mode == "🎯 SUNUM / DEMO MODU (Garantili)":
-        st.success("⚡ Şu an sunum modundasınız. Google kotası bitse bile sistem sıfır hatayla mükemmel çalışacaktır!")
+    # SUNUM KURTARICI: Canlı API anahtarı kutusu
+    live_key = st.text_input("🔑 Canlı/Yedek API Anahtarı", type="password", 
+                            help="Eğer kota hatası alırsanız, yeni aldığınız anahtarı buraya yapıştırıp analizi tekrar başlatın.")
+    
+    selected_model = st.selectbox("Yapay Zeka Modeli", ["gemini-2.0-flash", "gemini-1.5-flash"])
+    st.info("💡 İpucu: Sunumda 429 Kota hatası alırsanız, 10 saniye bekleyin veya sol kutuya yeni bir anahtar yapıştırın.")
 
-# --- ANA SAYFA ---
-st.markdown(f"""
+# API Key Belirleme Mantığı
+API_KEY = None
+if live_key.strip():
+    API_KEY = live_key.strip()
+elif "GEMINI_API_KEY" in st.secrets:
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+
+if not API_KEY:
+    st.error("🚨 API Anahtarı bulunamadı! Lütfen sol menüden veya Secrets alanından bir anahtar sağlayın.")
+    st.stop()
+
+client = genai.Client(api_key=API_KEY)
+
+# --- ARAYÜZ ANA GÖVDE ---
+st.markdown("""
 <div class="header-container">
-    <h1 class="header-title">🚢 Klas Kuruluşu Sörveyörü V2.5</h1>
-    <p class="header-subtitle">Çapraz Kontrol Motoru — Mod: {app_mode}</p>
+    <h1 class="header-title">🚢 Klas Kuruluşu Sörveyörü V3.0</h1>
+    <p class="header-subtitle">Multi-Document Çapraz Kontrol & Canlı Analiz Platformu</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -85,73 +96,193 @@ col1, col2 = st.columns([1.2, 1])
 
 with col1:
     st.subheader("📋 Gemi ve Denetim Bilgileri")
-    vessel_name_input = st.text_input("Gemi Adı", value="CANOPUS S")
-    imo_number = st.text_input("IMO Numarası", value="9076466")
-    grt_dwt = st.text_input("GT / DWT", value="4991")
-    vessel_type = st.selectbox("Gemi Türü", ["General Cargo", "Bulk Carrier", "Oil Tanker"])
-    survey_type = st.radio("Denetim Tipi", ["Annual", "Intermediate", "Renewal"])
-    surveyor_notes = st.text_area("Sörveyör Özel Notları", value="1.3 pls unmarked / check and verify")
+    vessel_name = st.text_input("Gemi Adı (Referans)")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        imo_number = st.text_input("IMO Numarası")
+    with col_b:
+        grt_dwt = st.text_input("GT / DWT")
+        
+    vessel_type = st.selectbox("Gemi Türü", ["Seçiniz", "General Cargo", "Bulk Carrier", "Oil Tanker", "Chemical Tanker", "Container", "Diğer"])
+    survey_type = st.radio("Denetim Tipi (Belgedeki kutucukla eşleşmeli)", ["Annual", "Intermediate", "Renewal", "Initial"])
+    surveyor_notes = st.text_area("Sörveyör Notları / Özel Talimatlar", placeholder="Örn: 1.3 pls unmarked, 12.4 check and verify...")
 
 with col2:
-    st.subheader("📁 Çapraz Kontrol Belgeleri")
-    uploaded_files = st.file_uploader("Sörvey Raporu veya Sertifikaları Yükle (PDF)", type=["pdf"], accept_multiple_files=True)
+    st.subheader("📁 Çapraz Kontrol İçin Belgeleri Yükle")
+    uploaded_files = st.file_uploader("Çoklu PDF Rapor/Sertifika Yükleme", type=["pdf"], accept_multiple_files=True)
 
-analyze_btn = st.button("🚀 Belgeleri Oku ve Çapraz Kontrol Yap", type="primary", use_container_width=True)
+analyze_btn = st.button("🚀 Belgeleri Canlı Oku ve Çapraz Kontrol Yap", type="primary", use_container_width=True)
 
-# --- ANALİZ TETİKLEME ---
+# --- MASTER PROMPT (HALÜSİNASYON ENGELLEMELİ) ---
+system_instruction = f"""
+Sen uluslararası IACS standartlarında çalışan, son derece titiz bir 'Baş Klas Sörveyörü'sün.
+Kullanıcı şu an '{survey_type}' denetimi yapıyor. Sörveyörün özel notları: '{surveyor_notes}'
+
+⚠️ KESİN VE KATI KURAL (110 MADDE UYDURMA HATASI ENGELLEME):
+SADECE VE SADECE kullanıcının yüklediği PDF belgelerinin içinde fiilen, açıkça geçen maddeleri ve satırları analiz et!
+Arka plandaki genel bilgi dağarcığından veya standart klas listelerinden ASLA yeni maddeler türetme, kafandan uydurma!
+Eğer yüklenen PDF'te sadece 20 madde varsa, senin çıktı listende de tam olarak sadece o 20 madde olmalıdır. Boşta kalan sörvey şablonlarını buraya dökme!
+
+UYULACAK KURALLAR:
+1. BOŞ KUTULAR (☐): 'Uygunsuz' sayma. 'Bilgi (info)' seviyesinde, "Doldurulmamış Olabilir" şeklinde belirt.
+2. SEE ATTACHMENT: Sörveyör eke atıf yapmışsa, bunu 'Uygun (success)' kabul et ve açıklamasında "[EK BELGE KONTROLÜ GEREKLİ]" yaz.
+3. TİK İŞARETİ (☑): Tablolardaki Tik işaretini daima "Uygundur/Sorunsuz" (success) kabul et.
+4. TARİH VE VİZE KONTROLÜ: Sertifikaların geçerlilik tarihi geçmişse veya yıllık vizeleri (Endorsement) eksikse "Kırmızı Alarm" ver.
+5. IMO/GEMİ UYUŞMAZLIĞI: Belgelerdeki gemi isimleri veya IMO numaraları uyuşmuyorsa "Kırmızı Alarm" ver.
+6. DENETİM TİPİ DOĞRULAMA: Belgenin başında işaretlenmiş denetim türü ile kullanıcının seçtiği '{survey_type}' uyuşmuyorsa "Kırmızı Alarm" üret.
+7. SÖRVEYÖR NOTLARI: Sörveyör notlarında belirtilen maddeleri (örn. 1.3 veya 12.4) öncelikle incele ve açıklamasında sörveyörün uyarısına atıf yap.
+
+KATEGORİ VE REFERANS: Her bulguyu şu 5 kategoriden birine ata: [Dokümantasyon, Yapısal, Makine, Emniyet, Çevre]. 'category' ve 'rule' (SOLAS/MARPOL kuralı) alanları zorunludur.
+
+Çıktıyı SADECE aşağıdaki JSON formatında ver:
+{{
+  "vessel_evaluation": "Genel değerlendirme metni...",
+  "findings": [
+    {{
+      "item_no": "Madde Sıra No",
+      "title": "Madde Başlığı",
+      "rule": "İlgili Kural Referansı",
+      "category": "Dokümantasyon / Yapısal / Makine / Emniyet / Çevre",
+      "status": "Durum Açıklaması",
+      "severity": "success | info | warning | error | critical",
+      "description": "Detaylı açıklama..."
+    }}
+  ]
+}}
+"""
+
 if analyze_btn:
-    if app_mode == "🎯 SUNUM / DEMO MODU (Garantili)":
-        with st.spinner("🧠 Yapay zeka belgeleri ve sörveyör notlarını çapraz kontrol ediyor..."):
-            time.sleep(2) # Gerçekçi bir bekleme süresi
-            st.session_state["analysis_results"] = get_mock_data(vessel_name_input, survey_type, surveyor_notes)
-            st.success("Analiz başarıyla tamamlandı!")
+    if not uploaded_files:
+        st.error("Lütfen en az bir adet PDF belgesi yükleyin.")
+    elif vessel_type == "Seçiniz":
+        st.error("Lütfen çapraz kontrol için Gemi Türünü seçin.")
     else:
-        # Canlı API Modu
+        st.session_state["analysis_results"] = None
+        uploaded_gemini_files = []
+        tmp_file_paths = []
+        
         try:
-            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-            # Canlı API kod akışı... (Eğer kota açıksa çalışır)
-            # [Kota hatası alınırsa sunum moduna geç uyarısı verecek]
-            st.error("Google Canlı API Kotanız şu an tükenmiş durumda. Lütfen sol menüden 'SUNUM / DEMO MODU'nu seçerek devam edin.")
-        except Exception as e:
-            st.error(f"Bağlantı Hatası: {str(e)}. Lütfen Sunum Moduna geçiş yapın.")
+            with st.spinner("📤 Belgeler işleniyor..."):
+                for uploaded_file in uploaded_files:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        tmp.write(uploaded_file.getvalue())
+                        tmp_file_paths.append(tmp.name)
+                    file_obj = client.files.upload(file=tmp.name)
+                    uploaded_gemini_files.append(file_obj)
+                time.sleep(2)
 
-# --- SONUÇLARI GÖSTERME ---
+            prompt_text = f"Gemi: {vessel_name}, IMO: {imo_number}, GT/DWT: {grt_dwt}, Tür: {vessel_type}, Seçilen Denetim: {survey_type}, Notlar: {surveyor_notes}"
+            
+            # --- AKILLI YOĞUNLUK VE KOTA KALKANI ---
+            max_retries = 4
+            response = None
+            for attempt in range(max_retries):
+                try:
+                    with st.spinner("🧠 Yapay zeka belgeleri çapraz kontrol ediyor..."):
+                        response = client.models.generate_content(
+                            model=selected_model,
+                            contents=uploaded_gemini_files + [prompt_text],
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                system_instruction=system_instruction,
+                                temperature=0.1
+                            )
+                        )
+                    break
+                except Exception as api_err:
+                    if ("429" in str(api_err) or "503" in str(api_err)) and attempt < max_retries - 1:
+                        wait = (attempt + 1) * 4
+                        st.warning(f"⏳ Sunucu Limiti (429/503). {wait} saniye içinde otomatik tekrar deneniyor...")
+                        time.sleep(wait)
+                        continue
+                    else:
+                        raise api_err
+
+            clean_res = response.text.replace('```json', '').replace('```', '').strip()
+            parsed_data = robust_json_parser(clean_res)
+            
+            if parsed_data and "findings" in parsed_data:
+                st.session_state["analysis_results"] = parsed_data
+                st.session_state["analyzed_vessel_name"] = vessel_name if vessel_name else "Survey"
+                st.success("Analiz başarıyla tamamlandı!")
+            else:
+                st.error("Rapor çözümlenemedi. Lütfen tekrar deneyin veya yedek anahtar kullanın.")
+                
+        except Exception as e:
+            st.error(f"Sistem Hatası: {str(e)}")
+            if "429" in str(e):
+                st.info("💡 Tavsiye: Sol menüdeki '🔑 Canlı/Yedek API Anahtarı' kutusuna yeni oluşturduğunuz anahtarı yapıştırarak anında kotayı sıfırlayabilirsiniz!")
+        finally:
+            for f in uploaded_gemini_files:
+                try: client.files.delete(name=f.name)
+                except: pass
+            for p in tmp_file_paths:
+                try: 
+                    if os.path.exists(p): os.remove(p)
+                except: pass
+
+# --- BULGULARI KATEGORİ BAZLI GÖSTERME ---
 if st.session_state["analysis_results"] is not None:
     data = st.session_state["analysis_results"]
     findings = data.get("findings", [])
-    df_findings = pd.DataFrame(findings)
+    vessel_name_ref = st.session_state["analyzed_vessel_name"]
     
     st.markdown("## 📊 Çapraz Kontrol ve Sörvey Sonuçları")
-    st.info(f"**Yapay Zeka Genel Değerlendirmesi:** {data.get('vessel_evaluation')}")
+    st.info(f"**Yapay Zeka Genel Değerlendirmesi:** {data.get('vessel_evaluation', '')}")
     
-    # Metrikler
+    # Metrik Skorları
+    c_crit = sum(1 for f in findings if f.get("severity") == "critical")
+    c_err = sum(1 for f in findings if f.get("severity") == "error")
+    c_warn = sum(1 for f in findings if f.get("severity") == "warning")
+    c_succ = sum(1 for f in findings if f.get("severity") == "success")
+    
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("🚨 Kritik / Alarm", sum(1 for f in findings if f.get("severity") == "critical"))
-    m2.metric("❌ Uygunsuzluklar", sum(1 for f in findings if f.get("severity") == "error"))
-    m3.metric("⚠️ Uyarılar", sum(1 for f in findings if f.get("severity") == "warning"))
-    m4.metric("✅ Uygun Maddeler", sum(1 for f in findings if f.get("severity") == "success"))
+    m1.metric("🚨 Kritik / Alarmler", c_crit)
+    m2.metric("❌ Uygunsuzluklar", c_err)
+    m3.metric("⚠️ Uyarılar", c_warn)
+    m4.metric("✅ Uygun Maddeler", c_succ)
+    
+    st.write("---")
     
     # Excel Butonu
     excel_data = generate_excel(findings)
-    st.download_button("📥 Raporu Excel Olarak İndir", data=excel_data, file_name=f"{vessel_name_input}_Rapor.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+    st.download_button(
+        label="📥 Raporu Excel Olarak İndir",
+        data=excel_data,
+        file_name=f"{vessel_name_ref}_Survey_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
     
-    # Kategori Görünümü ve Sekmeler
-    tab_cat, tab_all = st.tabs(["📂 Kategori Bazlı Görünüm", "🔍 Risk Derecesine Göre"])
+    st.write("---")
     
-    with tab_cat:
-        for cat in df_findings['category'].unique():
-            st.markdown(f'<div class="cat-header">{cat}</div>', unsafe_allow_html=True)
-            for f in [x for x in findings if x.get("category") == cat]:
-                sev = f.get("severity", "info")
-                icon = "🚨" if sev == "critical" else "❌" if sev == "error" else "⚠️" if sev == "warning" else "✅"
-                st.markdown(f"""
-                <div class="finding-card card-{sev}">
-                    <span class="finding-rule">{f.get('rule')}</span>
-                    <div class="finding-title">{f.get('item_no')}. {icon} {f.get('title')} ({f.get('status')})</div>
-                    <div class="finding-desc">{f.get('description')}</div>
-                </div>
-                """, unsafe_allow_html=True)
+    # Kart Tasarım Yardımcısı
+    def render_card(f):
+        sev = f.get("severity", "info").lower()
+        icon = "🚨" if sev == "critical" else "❌" if sev == "error" else "⚠️" if sev == "warning" else "✅" if sev == "success" else "ℹ️"
+        st.markdown(f"""
+        <div class="finding-card card-{sev}">
+            <span class="finding-rule">{f.get('rule', 'Kural Belirtilmemiş')}</span>
+            <div class="finding-title">{f.get('item_no', '-')}. {icon} {f.get('title')} ({f.get('status')})</div>
+            <div class="finding-desc">{f.get('description')}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # GRUPLANMIŞ KATEGORİ GÖRÜNÜMÜ
+    if findings:
+        df_findings = pd.DataFrame(findings)
+        
+        tab_cat, tab_raw = st.tabs(["📂 Kategori Bazlı Görünüm", "🔍 Tüm Liste (Tablo)"])
+        
+        with tab_cat:
+            if 'category' in df_findings.columns:
+                for cat in df_findings['category'].unique():
+                    st.markdown(f'<div class="cat-header">{cat}</div>', unsafe_allow_html=True)
+                    for f in [x for x in findings if x.get("category") == cat]:
+                        render_card(f)
+            else:
+                for f in findings: render_card(f)
                 
-    with tab_severity:
-        # Şablon risk kırılımı
-        st.dataframe(df_findings)
+        with tab_raw:
+            st.dataframe(df_findings)
