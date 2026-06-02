@@ -65,6 +65,12 @@ except Exception:
 
 client = genai.Client(api_key=API_KEY)
 
+# --- STATE MANAGEMENT FOR ANALYSIS RESULTS ---
+if "analysis_results" not in st.session_state:
+    st.session_state["analysis_results"] = None
+if "analyzed_vessel_name" not in st.session_state:
+    st.session_state["analyzed_vessel_name"] = ""
+
 # --- SOL MENÜ (MODEL SEÇİCİ) ---
 with st.sidebar:
     st.title("⚙️ Sistem Ayarları")
@@ -146,6 +152,7 @@ if analyze_btn:
     elif vessel_type == "Seçiniz":
         st.error("Lütfen çapraz kontrol için Gemi Türünü seçin.")
     else:
+        st.session_state["analysis_results"] = None  # Reset state before new run
         uploaded_gemini_files = []
         tmp_file_paths = []
         
@@ -181,54 +188,9 @@ if analyze_btn:
             parsed_data = robust_json_parser(clean_response)
             
             if parsed_data and "findings" in parsed_data:
-                findings = parsed_data["findings"]
-                
-                st.markdown("## 📊 V2 Çapraz Kontrol ve Sörvey Raporu")
-                st.info(f"**Yapay Zeka Değerlendirmesi:** {parsed_data.get('vessel_evaluation', '')}")
-                
-                c_crit = sum(1 for f in findings if f.get("severity") == "critical")
-                c_err = sum(1 for f in findings if f.get("severity") == "error")
-                c_warn = sum(1 for f in findings if f.get("severity") == "warning")
-                c_succ = sum(1 for f in findings if f.get("severity") == "success")
-                c_info = sum(1 for f in findings if f.get("severity") == "info")
-                
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("🚨 Kırmızı Alarm (Kritik)", c_crit)
-                m2.metric("❌ Uygunsuzluklar", c_err)
-                m3.metric("⚠️ Uyarılar", c_warn)
-                m4.metric("✅ Uygun Maddeler", c_succ)
-                
-                st.write("---")
-                
-                excel_data = generate_excel(findings, vessel_name)
-                st.download_button(
-                    label="📥 Raporu Excel Olarak İndir (Geçmiş Kayıtlar İçin)",
-                    data=excel_data,
-                    file_name=f"{vessel_name}_Survey_Report.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
-                )
-                
-                st.write("---")
-                
-                for f in findings:
-                    sev = f.get("severity", "info").lower()
-                    title = f.get("title", "")
-                    rule = f.get("rule", "Kural Belirtilmemiş")
-                    desc = f.get("description", "")
-                    status = f.get("status", "")
-                    item_no = f.get("item_no", "-")
-                    
-                    icon = "🚨" if sev == "critical" else "❌" if sev == "error" else "⚠️" if sev == "warning" else "✅" if sev == "success" else "ℹ️"
-                    
-                    st.markdown(f"""
-                    <div class="finding-card card-{sev}">
-                        <span class="finding-rule">{rule}</span>
-                        <div class="finding-title">{item_no}. {icon} {title} ({status})</div>
-                        <div class="finding-desc">{desc}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
+                st.session_state["analysis_results"] = parsed_data
+                st.session_state["analyzed_vessel_name"] = vessel_name if vessel_name else "Survey"
+                st.success("Analiz başarıyla tamamlandı!")
             else:
                 st.error("JSON ayrıştırma hatası oluştu.")
                 st.code(clean_response)
@@ -244,3 +206,95 @@ if analyze_btn:
                 try: 
                     if os.path.exists(p): os.remove(p)
                 except: pass
+
+# --- BULGULARI VE RAPORU GÖSTERME (SESSION STATE ÜZERİNDEN) ---
+if st.session_state["analysis_results"] is not None:
+    parsed_data = st.session_state["analysis_results"]
+    findings = parsed_data.get("findings", [])
+    vessel_name_ref = st.session_state["analyzed_vessel_name"]
+    
+    st.markdown("## 📊 V2 Çapraz Kontrol ve Sörvey Raporu")
+    st.info(f"**Yapay Zeka Değerlendirmesi:** {parsed_data.get('vessel_evaluation', '')}")
+    
+    c_crit = sum(1 for f in findings if f.get("severity") == "critical")
+    c_err = sum(1 for f in findings if f.get("severity") == "error")
+    c_warn = sum(1 for f in findings if f.get("severity") == "warning")
+    c_succ = sum(1 for f in findings if f.get("severity") == "success")
+    c_info = sum(1 for f in findings if f.get("severity") == "info")
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🚨 Kırmızı Alarm (Kritik)", c_crit)
+    m2.metric("❌ Uygunsuzluklar", c_err)
+    m3.metric("⚠️ Uyarılar", c_warn)
+    m4.metric("✅ Uygun Maddeler", c_succ)
+    
+    st.write("---")
+    
+    excel_data = generate_excel(findings, vessel_name_ref)
+    st.download_button(
+        label="📥 Raporu Excel Olarak İndir (Geçmiş Kayıtlar İçin)",
+        data=excel_data,
+        file_name=f"{vessel_name_ref}_Survey_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
+    
+    st.write("---")
+    
+    # Yardımcı bulgu kartı çizim fonksiyonu
+    def render_finding(f):
+        sev = f.get("severity", "info").lower()
+        title = f.get("title", "")
+        rule = f.get("rule", "Kural Belirtilmemiş")
+        desc = f.get("description", "")
+        status = f.get("status", "")
+        item_no = f.get("item_no", "-")
+        
+        icon = "🚨" if sev == "critical" else "❌" if sev == "error" else "⚠️" if sev == "warning" else "✅" if sev == "success" else "ℹ️"
+        
+        st.markdown(f"""
+        <div class="finding-card card-{sev}">
+            <span class="finding-rule">{rule}</span>
+            <div class="finding-title">{item_no}. {icon} {title} ({status})</div>
+            <div class="finding-desc">{desc}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # --- KATEGORİLERE AYRILMIŞ SEKME (TAB) GÖRÜNÜMÜ ---
+    tab_all, tab_bakilmali, tab_warning, tab_success = st.tabs([
+        f"🔍 Tüm Bulgular ({len(findings)})",
+        f"🚨 Bakılmalı / Sorunlu ({c_crit + c_err + c_info})",
+        f"⚠️ Uyarılar ({c_warn})",
+        f"✅ Uygun Maddeler ({c_succ})"
+    ])
+    
+    with tab_all:
+        if not findings:
+            st.info("Gösterilecek bulgu bulunamadı.")
+        else:
+            for f in findings:
+                render_finding(f)
+                
+    with tab_bakilmali:
+        bakilmali_findings = [f for f in findings if f.get("severity") in ["critical", "error", "info"]]
+        if not bakilmali_findings:
+            st.success("Bakılması gereken kritik bir durum, hata veya eksik bilgi bulunmamaktadır.")
+        else:
+            for f in bakilmali_findings:
+                render_finding(f)
+                
+    with tab_warning:
+        warn_findings = [f for f in findings if f.get("severity") == "warning"]
+        if not warn_findings:
+            st.success("Herhangi bir uyarı derecesinde bulgu bulunmamaktadır.")
+        else:
+            for f in warn_findings:
+                render_finding(f)
+                
+    with tab_success:
+        succ_findings = [f for f in findings if f.get("severity") == "success"]
+        if not succ_findings:
+            st.info("Herhangi bir uygun olarak onaylanmış madde bulunmamaktadır.")
+        else:
+            for f in succ_findings:
+                render_finding(f)
