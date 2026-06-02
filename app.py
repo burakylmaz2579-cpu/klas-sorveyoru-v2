@@ -62,6 +62,9 @@ try:
 except Exception:
     st.error("🚨 API Anahtarı bulunamadı! Lütfen Streamlit ayarlarından 'Secrets' kısmına GEMINI_API_KEY ekleyin.")
     st.stop()
+    # --- ARAYÜZ ---
+st.title("🚢 Klas Sörveyörü V2.3 | Sörveyör Notları Destekli")
+col1, col2 = st.columns([1, 1])
 
 client = genai.Client(api_key=API_KEY)
 
