@@ -134,7 +134,6 @@ with col1:
         
     vessel_type = st.selectbox("Gemi Türü", ["Seçiniz", "General Cargo", "Bulk Carrier", "Oil Tanker", "Chemical Tanker", "Container", "Diğer"])
     
-    # YENİ EKLENEN KISIM: SÖRVEYÖR NOTLARI
     surveyor_notes = st.text_area("✍️ Sörveyör Özel Notları / Talimatları", 
                                   placeholder="Örn: Raporu kontrol et ama özellikle 1.3 maddesine dikkat edilsin, 'unmarked' olabilir.")
 
@@ -142,19 +141,17 @@ with col2:
     st.subheader("📁 Çapraz Kontrol İçin Belgeleri Yükle")
     st.info("Sörvey raporu, Narrative Report ve Sertifikaları (PDF) aynı anda yükleyebilirsiniz.")
     
-    # DİNAMİK DOSYA YÜKLEYİCİ (Ekran temizleme için key kullanıldı)
     uploaded_files = st.file_uploader("Çoklu PDF Yükleme", type=["pdf"], accept_multiple_files=True, key=f"uploader_{st.session_state['uploader_key']}")
     
-    # YENİ EKLENEN KISIM: EKRANI TEMİZLE BUTONU
     if st.button("🔄 Ekranı Temizle / Yeni Belge Yükle", use_container_width=True):
         st.session_state['analysis_data'] = None
         st.session_state['vessel_name'] = ""
-        st.session_state['uploader_key'] += 1 # Bu işlem file_uploader'ı anında sıfırlar
+        st.session_state['uploader_key'] += 1 
         st.rerun()
 
 analyze_btn = st.button("🚀 Belgeleri Oku ve Çapraz Kontrol Yap", type="primary", use_container_width=True)
 
-# --- MASTER PROMPT (NOTLAR VE HALÜSİNASYON ENGELİ) ---
+# --- MASTER PROMPT ---
 system_instruction = f"""
 Sen uluslararası IACS standartlarında çalışan, son derece titiz bir 'Baş Klas Sörveyörü'sün.
 Amacın sana verilen belgeleri teker teker incelemek ve belgeler arası ÇAPRAZ KONTROL (Double-Check) yapmaktır.
@@ -230,3 +227,116 @@ if analyze_btn:
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
                         system_instruction=system_instruction,
+                        temperature=0.1
+                    )
+                )
+            
+            clean_response = response.text.replace('```json', '').replace('
+```', '').strip()
+            parsed_data = robust_json_parser(clean_response)
+            
+            if parsed_data and "findings" in parsed_data:
+                st.session_state['analysis_data'] = parsed_data
+                st.session_state['vessel_name'] = vessel_name
+            else:
+                st.error("JSON ayrıştırma hatası oluştu.")
+                st.code(clean_response)
+
+        except Exception as e:
+            st.error(f"Sistem Hatası: {str(e)}")
+            
+        finally:
+            for f in uploaded_gemini_files:
+                try: client.files.delete(name=f.name)
+                except: pass
+            for p in tmp_file_paths:
+                try: 
+                    if os.path.exists(p): os.remove(p)
+                except: pass
+
+
+# --- EĞER HAFIZADA VERİ VARSA EKRANA BASTIR ---
+if st.session_state['analysis_data']:
+    parsed_data = st.session_state['analysis_data']
+    findings = parsed_data["findings"]
+    current_vessel = st.session_state['vessel_name']
+    
+    st.markdown("## 📊 V2 Çapraz Kontrol ve Sörvey Raporu")
+    st.info(f"**Yapay Zeka Değerlendirmesi:** {parsed_data.get('vessel_evaluation', '')}")
+    
+    c_crit = sum(1 for f in findings if f.get("severity") == "critical")
+    c_err = sum(1 for f in findings if f.get("severity") == "error")
+    c_warn = sum(1 for f in findings if f.get("severity") == "warning")
+    c_succ = sum(1 for f in findings if f.get("severity") == "success")
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🚨 Kırmızı Alarm (Kritik)", c_crit)
+    m2.metric("❌ Uygunsuzluklar", c_err)
+    m3.metric("⚠️ Uyarılar", c_warn)
+    m4.metric("✅ Uygun Maddeler", c_succ)
+    
+    st.write("---")
+    
+    # BUTONLAR YANYANA
+    btn_col1, btn_col2 = st.columns(2)
+    
+    with btn_col1:
+        excel_data = generate_excel(findings, current_vessel)
+        st.download_button(
+            label="📥 Raporu Excel Olarak İndir",
+            data=excel_data,
+            file_name=f"{current_vessel}_Survey_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True
+        )
+        
+    with btn_col2:
+        html_data = generate_html_report(findings, current_vessel)
+        st.download_button(
+            label="📄 PDF/Yazdırılabilir Çıktı (HTML) İndir",
+            data=html_data,
+            file_name=f"{current_vessel}_Rapor.html",
+            mime="text/html",
+            type="secondary",
+            use_container_width=True
+        )
+        st.caption("İnen dosyaya tıklayıp tarayıcıda açın ve `Ctrl+P` yaparak mükemmel bir PDF alabilirsiniz.")
+    
+    st.write("---")
+    
+    # --- KATEGORİLERE GÖRE AYRILMIŞ SEKMELER (TABS) ---
+    st.markdown("### 📋 Bulgu Kategorileri")
+    tab1, tab2, tab3 = st.tabs(["✅ Uygun Olanlar", "❌ Uygun Olmayanlar", "⚠️ Düzeltilmesi Gerekenler"])
+    
+    def render_cards(filtered_findings):
+        if not filtered_findings:
+            st.success("Bu kategoride bulgu yok.")
+            return
+            
+        for f in filtered_findings:
+            sev = f.get("severity", "info").lower()
+            title = f.get("title", "")
+            rule = f.get("rule", "Kural Belirtilmemiş")
+            desc = f.get("description", "")
+            status = f.get("status", "")
+            item_no = f.get("item_no", "-")
+            
+            icon = "🚨" if sev == "critical" else "❌" if sev == "error" else "⚠️" if sev == "warning" else "✅" if sev == "success" else "ℹ️"
+            
+            st.markdown(f"""
+            <div class="finding-card card-{sev}">
+                <span class="finding-rule">{rule}</span>
+                <div class="finding-title">{item_no}. {icon} {title} ({status})</div>
+                <div class="finding-desc">{desc}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with tab1:
+        render_cards([f for f in findings if f.get("status") == "Uygun"])
+        
+    with tab2:
+        render_cards([f for f in findings if f.get("status") == "Uygun Değil"])
+        
+    with tab3:
+        render_cards([f for f in findings if f.get("status") == "Düzeltilmeli"])
