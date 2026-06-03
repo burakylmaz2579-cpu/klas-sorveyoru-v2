@@ -56,6 +56,41 @@ def generate_excel(findings, vessel_info):
     processed_data = output.getvalue()
     return processed_data
 
+# --- PDF İÇİN HTML RAPOR OLUŞTURUCU (TÜRKÇE KARAKTER SORUNU YAŞATMAZ) ---
+def generate_html_report(findings, vessel_name):
+    html_content = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>{vessel_name} Sörvey Raporu</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 20px; color: #333; }}
+            h1 {{ color: #1e293b; border-bottom: 2px solid #ccc; padding-bottom: 10px; }}
+            .item {{ border: 1px solid #ddd; padding: 15px; margin-bottom: 10px; border-radius: 8px; }}
+            .status {{ font-weight: bold; padding: 3px 8px; border-radius: 4px; }}
+        </style>
+    </head>
+    <body>
+        <h1>🚢 {vessel_name} - Çapraz Kontrol ve Sörvey Raporu</h1>
+    """
+    for f in findings:
+        html_content += f"""
+        <div class="item">
+            <div style="font-size: 18px; margin-bottom: 5px;"><b>{f.get('item_no', '-')}</b>. {f.get('title', '')}</div>
+            <div><b>Kural:</b> {f.get('rule', '-')}</div>
+            <div><b>Durum:</b> <span class="status">{f.get('status', '-')}</span></div>
+            <div style="margin-top: 10px;"><b>Açıklama:</b> {f.get('description', '')}</div>
+        </div>
+        """
+    html_content += "</body></html>"
+    return html_content.encode('utf-8')
+
+# --- EXCEL SAYFA SIFIRLANMASINI ENGELLEYEN STATE (HAFIZA) ---
+if 'analysis_data' not in st.session_state:
+    st.session_state['analysis_data'] = None
+if 'vessel_name' not in st.session_state:
+    st.session_state['vessel_name'] = ""
+
 # --- GÜVENLİ API BAĞLANTISI (SECRETS) ---
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -87,7 +122,7 @@ col1, col2 = st.columns([1.2, 1])
 
 with col1:
     st.subheader("📋 Gemi ve Denetim Bilgileri")
-    vessel_name = st.text_input("Gemi Adı (Referans)")
+    vessel_name = st.text_input("Gemi Adı (Referans)", value=st.session_state['vessel_name'])
     
     col_a, col_b = st.columns(2)
     with col_a:
@@ -102,25 +137,28 @@ with col2:
     st.info("Sörvey raporu, Narrative Report ve Sertifikaları (PDF) aynı anda yükleyebilirsiniz.")
     uploaded_files = st.file_uploader("Çoklu PDF Yükleme", type=["pdf"], accept_multiple_files=True)
 
-analyze_btn = st.button(f"🚀 Belgeleri Oku ve Çapraz Kontrol Yap", type="primary", use_container_width=True)
+analyze_btn = st.button("🚀 Belgeleri Oku ve Çapraz Kontrol Yap", type="primary", use_container_width=True)
 
-# --- MASTER PROMPT (V2 KURALLARI) ---
+# --- MASTER PROMPT (HALÜSİNASYON VE KATEGORİ GÜNCELLEMESİ) ---
 system_instruction = """
 Sen uluslararası IACS standartlarında çalışan, son derece titiz bir 'Baş Klas Sörveyörü'sün.
-Sana bir veya birden fazla gemi evrakı (Sörvey Kontrol Listesi, Statutory Sertifikalar, Narrative Raporlar) verilecek.
-Amacın bu belgeleri teker teker incelemek ve belgeler arası ÇAPRAZ KONTROL (Double-Check) yapmaktır.
+Amacın sana verilen belgeleri teker teker incelemek ve belgeler arası ÇAPRAZ KONTROL (Double-Check) yapmaktır.
+
+⚠️ DİKKAT (KATI KURAL): 
+SADECE VE SADECE sana yüklenen PDF belgelerinin içindeki maddeleri incele! 
+Kendi hafızandan, eski klas dökümanlarından veya genel kurallardan ASLA yeni maddeler (örneğin 110 maddelik şablonlar) UYDURMA! Belgede kaç madde varsa sadece onları listele ve HİÇBİR MADDEYİ ATLAMA.
 
 AŞAĞIDAKİ ALTIN KURALLARA KESİNLİKLE UYACAKSIN:
-1. BOŞ KUTULAR (☐): Eğer bir formda kutu boş bırakılmışsa bunu 'Uygunsuz' sayma. Bunu 'Bilgi (info)' seviyesinde, "Gözden Kaçmış/Doldurulmamış Olabilir" şeklinde belirt.
-2. SEE ATTACHMENT: Sörveyör değer girmek yerine eke atıf yapmışsa (SEE ATTACHMENT), bunu 'Uygun (success)' kabul et ve açıklamasında "[EK BELGE KONTROLÜ GEREKLİ]" yaz.
-3. YÜK LİSTESİ (IMSBC/DANG): Sayfalar dolusu yük isimlerini tek tek listeleme. SADECE geminin türü (örn: General Cargo) ile onaylı yüklerin doğası çelişiyorsa "Kırmızı Alarm" ver.
-4. TİK İŞARETİ (☑): Şablonun açıklaması ne olursa olsun, tablolardaki Tik (☑) işaretini daima "Uygundur/Sorunsuz" (success) olarak kabul et.
-5. TARİH VE VİZE KONTROLÜ (KRİTİK!): Sertifikaların bitiş tarihlerini (Valid until) ve Annual Endorsement (Yıllık Vize) sayfalarını KONTROL ET. Süresi geçmişse veya vize atılmamışsa "Kırmızı Alarm" ver.
-6. IMO/GEMİ UYUŞMAZLIĞI (KRİTİK!): Yüklenen belgelerdeki gemi isimleri veya IMO'lar birbiriyle uyuşmuyorsa, "Kırmızı Alarm: Farklı gemi evrakları yüklendi" uyarısı ver.
-7. EKİPMAN ÇELİŞKİSİ: Sertifikadaki cihaz markası ile saha raporundaki marka uyuşmuyorsa bunu "Uyarı (warning)" olarak raporla.
-8. TONAJ KONTROLÜ: Kullanıcının girdiği GT ve DWT değerlerini dikkate alarak SOLAS/MARPOL kurallarının uygulanabilirliğini (örn. 400 GT altı/üstü kural farkları) mutlaka kontrol et.
+1. BOŞ KUTULAR (☐): Eğer bir formda kutu boş bırakılmışsa bunu 'Düzeltilmeli' olarak değil, "Uygun Değil" veya "Gözden Kaçmış" olarak değerlendir.
+2. SEE ATTACHMENT: Sörveyör eke atıf yapmışsa (SEE ATTACHMENT), bunu 'Uygun' kabul et.
+3. TİK İŞARETİ (☑): Tablolardaki Tik (☑) işaretini daima 'Uygun' olarak kabul et.
 
-ÖNEMLİ ZORUNLULUK: Analiz ettiğin HER MADDENİN yanına KESİNLİKLE ilgili kuralı (SOLAS Bölüm..., MARPOL Ek..., IMO MSC.Circ...) referans olarak ekleyeceksin. Referanssız madde kalmayacak.
+⚠️ DURUM (STATUS) KATEGORİSİ KURALI:
+Çıktıdaki her bulgunun "status" alanına SADECE şu üç kelimeden birini yazabilirsin:
+- "Uygun"
+- "Uygun Değil"
+- "Düzeltilmeli"
+Başka hiçbir kelime kullanma!
 
 Çıktıyı SADECE aşağıdaki JSON formatında ver, başka hiçbir metin ekleme:
 {
@@ -132,7 +170,7 @@ AŞAĞIDAKİ ALTIN KURALLARA KESİNLİKLE UYACAKSIN:
       "item_no": "Madde Sıra No (örn: 1, 2, 3...)",
       "title": "Madde Başlığı",
       "rule": "İlgili Kural (Örn: SOLAS Ch. II-2 Reg. 10)",
-      "status": "Uygun | Bilgi | Uyarı | Uygunsuz | Kırmızı Alarm",
+      "status": "Uygun | Uygun Değil | Düzeltilmeli",
       "severity": "success | info | warning | error | critical",
       "description": "Detaylı açıklama..."
     }
@@ -150,7 +188,7 @@ if analyze_btn:
         tmp_file_paths = []
         
         try:
-            with st.spinner(f"📤 Belgeler güvenli sunucuya yükleniyor..."):
+            with st.spinner("📤 Belgeler güvenli sunucuya yükleniyor..."):
                 for uploaded_file in uploaded_files:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                         tmp.write(uploaded_file.getvalue())
@@ -161,7 +199,7 @@ if analyze_btn:
                 
                 time.sleep(3) 
 
-            prompt_text = f"Kullanıcının Girdiği Gemi Referans Bilgileri:\nAdı: {vessel_name}\nIMO: {imo_number}\nGT/DWT: {grt_dwt}\nTür: {vessel_type}\nLütfen tüm belgeleri analiz edip kurallara uygun JSON dön."
+            prompt_text = f"Kullanıcının Girdiği Gemi Referans Bilgileri:\nAdı: {vessel_name}\nIMO: {imo_number}\nGT/DWT: {grt_dwt}\nTür: {vessel_type}\nLütfen belgelerdeki İSTİSNASIZ TÜM maddeleri incele ve JSON dön."
             
             contents = uploaded_gemini_files.copy()
             contents.append(prompt_text)
@@ -181,54 +219,9 @@ if analyze_btn:
             parsed_data = robust_json_parser(clean_response)
             
             if parsed_data and "findings" in parsed_data:
-                findings = parsed_data["findings"]
-                
-                st.markdown("## 📊 V2 Çapraz Kontrol ve Sörvey Raporu")
-                st.info(f"**Yapay Zeka Değerlendirmesi:** {parsed_data.get('vessel_evaluation', '')}")
-                
-                c_crit = sum(1 for f in findings if f.get("severity") == "critical")
-                c_err = sum(1 for f in findings if f.get("severity") == "error")
-                c_warn = sum(1 for f in findings if f.get("severity") == "warning")
-                c_succ = sum(1 for f in findings if f.get("severity") == "success")
-                c_info = sum(1 for f in findings if f.get("severity") == "info")
-                
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("🚨 Kırmızı Alarm (Kritik)", c_crit)
-                m2.metric("❌ Uygunsuzluklar", c_err)
-                m3.metric("⚠️ Uyarılar", c_warn)
-                m4.metric("✅ Uygun Maddeler", c_succ)
-                
-                st.write("---")
-                
-                excel_data = generate_excel(findings, vessel_name)
-                st.download_button(
-                    label="📥 Raporu Excel Olarak İndir (Geçmiş Kayıtlar İçin)",
-                    data=excel_data,
-                    file_name=f"{vessel_name}_Survey_Report.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
-                )
-                
-                st.write("---")
-                
-                for f in findings:
-                    sev = f.get("severity", "info").lower()
-                    title = f.get("title", "")
-                    rule = f.get("rule", "Kural Belirtilmemiş")
-                    desc = f.get("description", "")
-                    status = f.get("status", "")
-                    item_no = f.get("item_no", "-")
-                    
-                    icon = "🚨" if sev == "critical" else "❌" if sev == "error" else "⚠️" if sev == "warning" else "✅" if sev == "success" else "ℹ️"
-                    
-                    st.markdown(f"""
-                    <div class="finding-card card-{sev}">
-                        <span class="finding-rule">{rule}</span>
-                        <div class="finding-title">{item_no}. {icon} {title} ({status})</div>
-                        <div class="finding-desc">{desc}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
+                # EKRAN SIFIRLANMASINI ENGELLEMEK İÇİN VERİYİ HAFIZAYA ALIYORUZ
+                st.session_state['analysis_data'] = parsed_data
+                st.session_state['vessel_name'] = vessel_name
             else:
                 st.error("JSON ayrıştırma hatası oluştu.")
                 st.code(clean_response)
@@ -244,3 +237,90 @@ if analyze_btn:
                 try: 
                     if os.path.exists(p): os.remove(p)
                 except: pass
+
+
+# --- EĞER HAFIZADA VERİ VARSA EKRANA BASTIR (EXCEL BUTONU ARTIK SAYFAYI SIFIRLAMAZ) ---
+if st.session_state['analysis_data']:
+    parsed_data = st.session_state['analysis_data']
+    findings = parsed_data["findings"]
+    current_vessel = st.session_state['vessel_name']
+    
+    st.markdown("## 📊 V2 Çapraz Kontrol ve Sörvey Raporu")
+    st.info(f"**Yapay Zeka Değerlendirmesi:** {parsed_data.get('vessel_evaluation', '')}")
+    
+    c_crit = sum(1 for f in findings if f.get("severity") == "critical")
+    c_err = sum(1 for f in findings if f.get("severity") == "error")
+    c_warn = sum(1 for f in findings if f.get("severity") == "warning")
+    c_succ = sum(1 for f in findings if f.get("severity") == "success")
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🚨 Kırmızı Alarm (Kritik)", c_crit)
+    m2.metric("❌ Uygunsuzluklar", c_err)
+    m3.metric("⚠️ Uyarılar", c_warn)
+    m4.metric("✅ Uygun Maddeler", c_succ)
+    
+    st.write("---")
+    
+    # BUTONLAR YANYANA
+    btn_col1, btn_col2 = st.columns(2)
+    
+    with btn_col1:
+        excel_data = generate_excel(findings, current_vessel)
+        st.download_button(
+            label="📥 Raporu Excel Olarak İndir",
+            data=excel_data,
+            file_name=f"{current_vessel}_Survey_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True
+        )
+        
+    with btn_col2:
+        html_data = generate_html_report(findings, current_vessel)
+        st.download_button(
+            label="📄 PDF/Yazdırılabilir Çıktı (HTML) İndir",
+            data=html_data,
+            file_name=f"{current_vessel}_Rapor.html",
+            mime="text/html",
+            type="secondary",
+            use_container_width=True
+        )
+        st.caption("İnen dosyaya tıklayıp tarayıcıda açın ve `Ctrl+P` yaparak mükemmel bir PDF alabilirsiniz (Türkçe karakterleri bozmaz).")
+    
+    st.write("---")
+    
+    # --- KATEGORİLERE GÖRE AYRILMIŞ SEKMELER (TABS) ---
+    st.markdown("### 📋 Bulgu Kategorileri")
+    tab1, tab2, tab3 = st.tabs(["✅ Uygun Olanlar", "❌ Uygun Olmayanlar", "⚠️ Düzeltilmesi Gerekenler"])
+    
+    def render_cards(filtered_findings):
+        if not filtered_findings:
+            st.success("Bu kategoride bulgu yok.")
+            return
+            
+        for f in filtered_findings:
+            sev = f.get("severity", "info").lower()
+            title = f.get("title", "")
+            rule = f.get("rule", "Kural Belirtilmemiş")
+            desc = f.get("description", "")
+            status = f.get("status", "")
+            item_no = f.get("item_no", "-")
+            
+            icon = "🚨" if sev == "critical" else "❌" if sev == "error" else "⚠️" if sev == "warning" else "✅" if sev == "success" else "ℹ️"
+            
+            st.markdown(f"""
+            <div class="finding-card card-{sev}">
+                <span class="finding-rule">{rule}</span>
+                <div class="finding-title">{item_no}. {icon} {title} ({status})</div>
+                <div class="finding-desc">{desc}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with tab1:
+        render_cards([f for f in findings if f.get("status") == "Uygun"])
+        
+    with tab2:
+        render_cards([f for f in findings if f.get("status") == "Uygun Değil"])
+        
+    with tab3:
+        render_cards([f for f in findings if f.get("status") == "Düzeltilmeli"])
