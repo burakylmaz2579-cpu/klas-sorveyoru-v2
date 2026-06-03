@@ -151,7 +151,7 @@ with col2:
 
 analyze_btn = st.button("🚀 Belgeleri Oku ve Çapraz Kontrol Yap", type="primary", use_container_width=True)
 
-# --- MASTER PROMPT ---
+# --- MASTER PROMPT (JSON KISMINDA PARANTEZLER ÇİFTLENDİ) ---
 system_instruction = f"""
 Sen uluslararası IACS standartlarında çalışan, son derece titiz bir 'Baş Klas Sörveyörü'sün.
 Amacın sana verilen belgeleri teker teker incelemek ve belgeler arası ÇAPRAZ KONTROL (Double-Check) yapmaktır.
@@ -231,8 +231,7 @@ if analyze_btn:
                     )
                 )
             
-            clean_response = response.text.replace('```json', '').replace('
-```', '').strip()
+            clean_response = response.text.replace('```json', '').replace('```', '').strip()
             parsed_data = robust_json_parser(clean_response)
             
             if parsed_data and "findings" in parsed_data:
